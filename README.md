@@ -4,6 +4,9 @@ A complete, local Model Context Protocol (MCP) server written in pure Dart to au
 
 ---
 
+<img width="302" height="994" alt="AssetGenie in Action" src="https://github.com/user-attachments/assets/0858bc99-c10b-43a0-a8d4-05b9be17d558" />
+
+
 ## 🚀 Features
 
 AssetGenie exposes three powerful tools to the LLM context:
