@@ -52,12 +52,16 @@ Ensure you have [Dart SDK](https://dart.dev/get-dart) installed on your system.
 
 ---
 
-## 🔌 Connecting to LLMs (MCP Clients)
+## 🔌 Connecting to LLMs & IDEs (MCP Clients)
 
-To use AssetGenie inside your favorite AI environment, configure it as a local stdio MCP server.
+To use AssetGenie inside your favorite AI assistant or development environment, configure it as a local stdio MCP server.
 
-### 1. Claude Desktop
-Add the following to your `claude_desktop_config.json` configuration:
+### 1. Antigravity IDE
+Antigravity automatically discovers MCP servers configured in its global MCP configuration file:
+- **Windows**: `C:\Users\<Your-Username>\.gemini\antigravity-ide\mcp_config.json`
+- **macOS / Linux**: `~/.gemini/antigravity-ide/mcp_config.json`
+
+Add the following under the `"mcpServers"` object:
 
 ```json
 {
@@ -73,7 +77,65 @@ Add the following to your `claude_desktop_config.json` configuration:
 }
 ```
 
-### 2. Cursor / Windsurf
+### 2. JetBrains IntelliJ IDEA / Android Studio
+To bring AssetGenie's capabilities into IntelliJ IDEA or Android Studio, you can use the **Continue** plugin or the **Cline / Roo Cline** plugins.
+
+#### Option A: Using Continue (via config.yaml)
+Add the following to your global Continue configuration (`~/.continue/config.yaml` or `C:\Users\<Your-Username>\.continue\config.yaml`) under the `mcpServers` block:
+
+```yaml
+mcpServers:
+  - name: assetgenie
+    type: stdio
+    command: dart
+    args:
+      - "run"
+      - "C:\\path\\to\\AssetGenie\\bin\\main.dart"
+```
+> [!NOTE]
+> Make sure to switch Continue to **Agent Mode** in your chat panel to enable tool execution.
+
+#### Option B: Using Cline / Roo Cline
+Add the following to your settings file (`roo_cline_mcp_settings.json`):
+
+```json
+{
+  "mcpServers": {
+    "assetgenie": {
+      "command": "dart",
+      "args": [
+        "run",
+        "C:\\path\\to\\AssetGenie\\bin\\main.dart"
+      ]
+    }
+  }
+}
+```
+
+### 3. VS Code
+You can use the **Continue**, **Cline**, or **Roo Cline** extensions in VS Code by applying the same configurations as JetBrains IDEs.
+- Cline settings are stored in `C:\Users\<Your-Username>\AppData\Roaming\Code\User\globalStorage\saoudrizwan.claude-dev\settings\cline_mcp_settings.json` (Windows) or `~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json` (macOS).
+
+### 4. Claude Desktop
+Add the following to your `claude_desktop_config.json` configuration file:
+- **Windows**: `C:\Users\<Your-Username>\AppData\Roaming\Claude\claude_desktop_config.json`
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "assetgenie": {
+      "command": "dart",
+      "args": [
+        "run",
+        "C:\\path\\to\\AssetGenie\\bin\\main.dart"
+      ]
+    }
+  }
+}
+```
+
+### 5. Cursor / Windsurf
 Go to **Settings** -> **Features** -> **MCP**, click **Add New MCP Server**:
 - **Name**: `AssetGenie`
 - **Type**: `stdio`
