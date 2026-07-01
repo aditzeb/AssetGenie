@@ -128,6 +128,32 @@ void main() async {
     handler: auditLocalization,
   );
 
+  // Register assetgenie_app_harness tool
+  server.addTool(
+    name: 'assetgenie_app_harness',
+    description:
+        "Connects to a running Flutter application via its VM Service to inspect "
+        "widgets, retrieve console logs, or capture live UI screenshots.",
+    inputSchema: {
+      'type': 'object',
+      'properties': {
+        'vm_service_uri': {
+          'type': 'string',
+          'description':
+              'The Dart VM Service WebSocket or HTTP URI (e.g. http://127.0.0.1:8181/T9n3k_04gA=/).',
+        },
+        'action': {
+          'type': 'string',
+          'enum': ['get_widget_tree', 'capture_screenshot', 'get_logs'],
+          'description':
+              'The instrumentation action to perform on the running Flutter application.',
+        },
+      },
+      'required': ['vm_service_uri', 'action'],
+    },
+    handler: appHarness,
+  );
+
   try {
     final transport = FlutterMcpServer.createStdioTransport();
     server.connect(transport);

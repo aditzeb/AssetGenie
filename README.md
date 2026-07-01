@@ -9,7 +9,7 @@ A complete, local Model Context Protocol (MCP) server written in pure Dart to au
 
 ## 🚀 Features
 
-AssetGenie exposes three powerful tools to the LLM context:
+AssetGenie exposes five powerful tools to the LLM context:
 
 ### 1. `assetgenie_audit_health`
 Scans the project's `pubspec.yaml` and physical folders to identify asset anomalies:
@@ -37,6 +37,12 @@ Audits the project's ARB localization files to ensure quality and consistency:
 - Detects extra translation keys defined in target locales but missing in the primary locale.
 - Validates that parameterized placeholders (e.g., `{name}`) match between translations to prevent runtime formatting crashes.
 - Scans Dart code recursively in `lib/` to identify unused translation keys.
+
+### 5. `assetgenie_app_harness`
+Connects to a running Flutter application via its Dart VM Service to inspect layout, capture state, or stream logs:
+- Retrieves a clean, structured JSON Widget Summary Tree from the active application context.
+- Requests a live PNG screenshot of the application's current layout, returning it directly in the tool response.
+- Streams and captures stdout/stderr console prints and runtime logging statements over WebSocket.
 
 ---
 
@@ -172,6 +178,10 @@ Go to **Settings** -> **Features** -> **MCP**, click **Add New MCP Server**:
 - `project_path` (string, required): Absolute path to the Flutter root directory.
 - `primary_locale` (string, optional): The base locale to compare other locales against (default: `'en'`).
 - `unused_keys_check` (boolean, optional): Whether to check for unused keys in `lib/**/*.dart` (default: `true`).
+
+### 5. `assetgenie_app_harness`
+- `vm_service_uri` (string, required): The Dart VM Service WebSocket or HTTP URI (e.g., `http://127.0.0.1:8181/T9n3k_04gA=/`).
+- `action` (string, required): The instrumentation action to perform on the running Flutter application (`'get_widget_tree'`, `'capture_screenshot'`, `'get_logs'`).
 
 ---
 

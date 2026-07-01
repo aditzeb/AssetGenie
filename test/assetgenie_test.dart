@@ -201,6 +201,141 @@ void main() async {
   }
   print('PASS: auditLocalization verification successful.');
 
+  // 5. Verify appHarness (Mock VM Service)
+  print('\n--- 5. Testing assetgenie_app_harness ---');
+  final mockServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+  final mockPort = mockServer.port;
+  final mockVmServiceUri = 'http://127.0.0.1:$mockPort/mock_token/';
+
+  final serverSub = mockServer.listen((HttpRequest request) async {
+    if (WebSocketTransformer.isUpgradeRequest(request)) {
+      final ws = await WebSocketTransformer.upgrade(request);
+      ws.listen((data) {
+        final parsed = jsonDecode(data as String) as Map<String, dynamic>;
+        final id = parsed['id'];
+        final method = parsed['method'] as String;
+
+        if (method == 'ext.flutter.inspector.getRootWidgetSummaryTree') {
+          ws.add(jsonEncode({
+            'jsonrpc': '2.0',
+            'result': {
+              'result': {
+                'valueId': 'inspector-123',
+                'description': 'MyAppRoot',
+              }
+            },
+            'id': id,
+          }));
+        } else if (method == 'ext.flutter.inspector.screenshot') {
+          ws.add(jsonEncode({
+            'jsonrpc': '2.0',
+            'result': {
+              'result': 'mock_base64_png_image_data_here',
+            },
+            'id': id,
+          }));
+        } else if (method == 'streamListen') {
+          ws.add(jsonEncode({
+            'jsonrpc': '2.0',
+            'result': {'status': 'success'},
+            'id': id,
+          }));
+
+          final streamId = parsed['params']?['streamId'] as String?;
+          if (streamId == 'Stdout') {
+            ws.add(jsonEncode({
+              'jsonrpc': '2.0',
+              'method': 'streamNotify',
+              'params': {
+                'streamId': 'Stdout',
+                'event': {
+                  'timestamp': DateTime.now().millisecondsSinceEpoch,
+                  'bytes': base64
+                      .encode(utf8.encode('Hello from Flutter Stdout!\n')),
+                }
+              }
+            }));
+          }
+        }
+      });
+    } else {
+      request.response.statusCode = HttpStatus.notFound;
+      await request.response.close();
+    }
+  });
+
+  // Test action: get_widget_tree
+  final treeResult = await appHarness({
+    'vm_service_uri': mockVmServiceUri,
+    'action': 'get_widget_tree',
+  });
+
+  if (treeResult.isError == true) {
+    print(
+        'FAIL: appHarness get_widget_tree returned error: ${treeResult.content.first.toJson()}');
+    await serverSub.cancel();
+    await mockServer.close();
+    exit(1);
+  }
+  final treeText = (treeResult.content.first.toJson())['text'] as String;
+  if (!treeText.contains('MyAppRoot') || !treeText.contains('inspector-123')) {
+    print(
+        'FAIL: appHarness get_widget_tree response did not contain expected root widget.');
+    await serverSub.cancel();
+    await mockServer.close();
+    exit(1);
+  }
+
+  // Test action: capture_screenshot
+  final screenshotResult = await appHarness({
+    'vm_service_uri': mockVmServiceUri,
+    'action': 'capture_screenshot',
+  });
+
+  if (screenshotResult.isError == true) {
+    print(
+        'FAIL: appHarness capture_screenshot returned error: ${screenshotResult.content.first.toJson()}');
+    await serverSub.cancel();
+    await mockServer.close();
+    exit(1);
+  }
+  final screenshotJson = screenshotResult.content.first.toJson();
+  if (screenshotJson['type'] != 'image' ||
+      screenshotJson['url'] !=
+          'data:image/png;base64,mock_base64_png_image_data_here') {
+    print(
+        'FAIL: appHarness capture_screenshot response did not contain expected ImageContent.');
+    await serverSub.cancel();
+    await mockServer.close();
+    exit(1);
+  }
+
+  // Test action: get_logs
+  final logsResult = await appHarness({
+    'vm_service_uri': mockVmServiceUri,
+    'action': 'get_logs',
+  });
+
+  if (logsResult.isError == true) {
+    print(
+        'FAIL: appHarness get_logs returned error: ${logsResult.content.first.toJson()}');
+    await serverSub.cancel();
+    await mockServer.close();
+    exit(1);
+  }
+  final logsText = (logsResult.content.first.toJson())['text'] as String;
+  if (!logsText.contains('Hello from Flutter Stdout!')) {
+    print(
+        'FAIL: appHarness get_logs response did not contain expected captured logs.');
+    await serverSub.cancel();
+    await mockServer.close();
+    exit(1);
+  }
+
+  await serverSub.cancel();
+  await mockServer.close();
+  print('PASS: appHarness verification successful.');
+
   print('\n========================================');
   print('ALL VERIFICATIONS PASSED SUCCESSFULLY!');
   print('========================================');
