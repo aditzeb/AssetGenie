@@ -144,6 +144,63 @@ void main() async {
   }
   print('PASS: generateConstants verification successful.');
 
+  // 4. Verify auditLocalization
+  print('\n--- 4. Testing assetgenie_audit_localization ---');
+  // Inject welcomeMessage with placeholder into app_en.arb
+  final appEnFile = File(p.join(dummyProjectPath, 'lib', 'l10n', 'app_en.arb'));
+  final appEnData =
+      jsonDecode(appEnFile.readAsStringSync()) as Map<String, dynamic>;
+  appEnData['welcomeMessage'] = 'Welcome, {name}!';
+  appEnFile.writeAsStringSync(jsonEncode(appEnData));
+
+  // Write app_es.arb with missing key, extra key, and placeholder mismatch
+  final appEsFile = File(p.join(dummyProjectPath, 'lib', 'l10n', 'app_es.arb'));
+  appEsFile.writeAsStringSync(jsonEncode({
+    '@@locale': 'es',
+    'appTitle': 'Aplicación de demostración',
+    'cancelButton': 'Cancelar',
+    'loginButton': 'Iniciar sesión',
+    'welcomeMessage': '¡Bienvenido, {username}!',
+    'extraSpanishKey': 'Hola'
+  }));
+
+  final auditLocResult = await auditLocalization({
+    'project_path': dummyProjectPath,
+    'primary_locale': 'en',
+    'unused_keys_check': true,
+  });
+
+  // Clean up app_es.arb and restore app_en.arb
+  if (appEsFile.existsSync()) {
+    appEsFile.deleteSync();
+  }
+  appEnData.remove('welcomeMessage');
+  appEnFile.writeAsStringSync(jsonEncode(appEnData));
+
+  if (auditLocResult.isError == true) {
+    print(
+        'FAIL: auditLocalization returned error: ${auditLocResult.content.first.toJson()}');
+    exit(1);
+  }
+
+  final auditLocText =
+      (auditLocResult.content.first.toJson())['text'] as String;
+  print(auditLocText);
+
+  // Assertions on report content
+  if (!auditLocText.contains('Missing Translations') ||
+      !auditLocText.contains('logoutButton') ||
+      !auditLocText.contains('Extra Translations') ||
+      !auditLocText.contains('extraSpanishKey') ||
+      !auditLocText.contains('Placeholder Mismatches') ||
+      !auditLocText.contains('welcomeMessage') ||
+      !auditLocText.contains('Unused Translation Keys')) {
+    print(
+        'FAIL: auditLocalization report did not contain expected sections or findings.');
+    exit(1);
+  }
+  print('PASS: auditLocalization verification successful.');
+
   print('\n========================================');
   print('ALL VERIFICATIONS PASSED SUCCESSFULLY!');
   print('========================================');

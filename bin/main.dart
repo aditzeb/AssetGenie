@@ -99,6 +99,35 @@ void main() async {
     handler: generateConstants,
   );
 
+  // Register assetgenie_audit_localization tool
+  server.addTool(
+    name: 'assetgenie_audit_localization',
+    description:
+        "Scans the target Flutter project's ARB localization files to identify "
+        "missing translations, extra keys, mismatched placeholders, or unused translation keys.",
+    inputSchema: {
+      'type': 'object',
+      'properties': {
+        'project_path': {
+          'type': 'string',
+          'description': 'Absolute path to the Flutter project root directory.',
+        },
+        'primary_locale': {
+          'type': 'string',
+          'description':
+              "The base locale code to compare other locales against (default: 'en').",
+        },
+        'unused_keys_check': {
+          'type': 'boolean',
+          'description':
+              "Whether to check if translation keys are unused in the Dart source code (default: true).",
+        },
+      },
+      'required': ['project_path'],
+    },
+    handler: auditLocalization,
+  );
+
   try {
     final transport = FlutterMcpServer.createStdioTransport();
     server.connect(transport);

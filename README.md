@@ -31,6 +31,13 @@ Auto-generates clean, modern Dart constants from physical asset files:
 - Resolves identifier collisions and reserved keywords dynamically.
 - Writes a safe config class `Assets` inside `lib/generated/` to prevent typos and hardcoded string values.
 
+### 4. `assetgenie_audit_localization`
+Audits the project's ARB localization files to ensure quality and consistency:
+- Compares target locales against a primary locale to find missing translation keys.
+- Detects extra translation keys defined in target locales but missing in the primary locale.
+- Validates that parameterized placeholders (e.g., `{name}`) match between translations to prevent runtime formatting crashes.
+- Scans Dart code recursively in `lib/` to identify unused translation keys.
+
 ---
 
 ## 🛠️ Installation & Setup
@@ -160,6 +167,11 @@ Go to **Settings** -> **Features** -> **MCP**, click **Add New MCP Server**:
 ### 3. `assetgenie_generate_constants`
 - `project_path` (string, required): Absolute path to the Flutter root directory.
 - `output_filename` (string, optional): Target file name (default: `'generated_assets.dart'`).
+
+### 4. `assetgenie_audit_localization`
+- `project_path` (string, required): Absolute path to the Flutter root directory.
+- `primary_locale` (string, optional): The base locale to compare other locales against (default: `'en'`).
+- `unused_keys_check` (boolean, optional): Whether to check for unused keys in `lib/**/*.dart` (default: `true`).
 
 ---
 
