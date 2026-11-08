@@ -1,6 +1,8 @@
 name: assetgenie
 description: A command-line utility that connects to LLMs via standard I/O and provides tools to optimize, audit, and auto-generate assets and localization structures inside a local Flutter project directory.
 version: 1.1.0
+repository: https://github.com/aditzeb/AssetGenie
+issue_tracker: https://github.com/aditzeb/AssetGenie/issues
 environment:
   sdk: '>=3.0.0 <4.0.0'
 

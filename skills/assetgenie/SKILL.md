@@ -43,3 +43,4 @@ When working on Flutter projects, use **AssetGenie** tools to inspect project as
 2. Review proposed ARB keys.
 3. Run with `apply_rewrites: true` to update Dart widgets and primary ARB.
 4. Run `assetgenie_translate_localization` for other supported languages.
+
