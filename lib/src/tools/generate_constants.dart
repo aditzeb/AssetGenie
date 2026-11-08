@@ -1,311 +1,271 @@
 import 'dart:io';
-import 'package:path/path.dart' as p;
-import 'package:mcp_server/mcp_server.dart';
 
-Future<CallToolResult> generateConstants(Map<String, dynamic> arguments) async {
-  final projectPath = arguments['project_path'] as String?;
-  if (projectPath == null || projectPath.isEmpty) {
-    return CallToolResult(
-      [
-        TextContent(
-            text: 'Error: "project_path" is required and cannot be empty.')
+import 'package:dart_mcp/server.dart';
+import 'package:path/path.dart' as p;
+
+import '../common/context.dart';
+import '../common/project.dart';
+
+final ToolSpec generateConstantsSpec = ToolSpec(
+  Tool(
+    name: 'assetgenie_generate_constants',
+    title: 'Generate Dart asset and font constants',
+    description:
+        'Scans physical asset directories and declared fonts in pubspec.yaml '
+        'to auto-generate clean, type-safe Dart constants inside lib/generated/. '
+        'Resolves collisions, formats identifiers in camelCase, and handles reserved keywords.',
+    annotations: ToolAnnotations(
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    ),
+    inputSchema: ObjectSchema(
+      properties: {
+        'project_path': StringSchema(
+          description: 'Absolute path to the Flutter project root directory.',
+        ),
+        'output_filename': StringSchema(
+          description:
+              "Target filename for the generated class (default: 'generated_assets.dart').",
+        ),
+        'class_name': StringSchema(
+          description:
+              "Name of the generated class (default: 'Assets').",
+        ),
+        'dry_run': BooleanSchema(
+          description:
+              'If true, previews the generated constants without writing to disk.',
+        ),
+      },
+      required: ['project_path'],
+    ),
+    outputSchema: ObjectSchema(
+      properties: {
+        'output_file': StringSchema(),
+        'asset_count': IntegerSchema(),
+        'font_family_count': IntegerSchema(),
+        'dry_run': BooleanSchema(),
+        'constants': ObjectSchema(
+          description: 'Identifier mapped to asset path.',
+        ),
+      },
+      required: [
+        'output_file',
+        'asset_count',
+        'font_family_count',
+        'dry_run',
+        'constants',
       ],
-      isError: true,
-    );
-  }
+    ),
+  ),
+  generateConstantsHandler,
+);
+
+Future<CallToolResult> generateConstantsHandler(
+  Map<String, Object?> args,
+  ToolContext context,
+) async {
+  final loaded = FlutterProject.load(args['project_path']);
+  if (loaded.error != null) return toolError(loaded.error!);
+  final project = loaded.project!;
 
   final outputFilename =
-      arguments['output_filename'] as String? ?? 'generated_assets.dart';
+      args['output_filename'] as String? ?? 'generated_assets.dart';
+  final className = args['class_name'] as String? ?? 'Assets';
+  final dryRun = argBool(args, 'dry_run', false);
 
-  try {
-    final projectDir = Directory(projectPath);
-    if (!projectDir.existsSync()) {
-      return CallToolResult(
-        [
-          TextContent(
-              text:
-                  'Error: Project directory does not exist at "$projectPath".')
-        ],
-        isError: true,
-      );
+  // 1. Gather all assets directories
+  final assetsDirs = <Directory>[];
+  final mainAssetsDir = Directory(p.join(project.root, 'assets'));
+  if (mainAssetsDir.existsSync()) {
+    assetsDirs.add(mainAssetsDir);
+  }
+
+  for (final dirAsset in project.declaredAssetDirs) {
+    final customDir = Directory(project.abs(dirAsset));
+    if (customDir.existsSync() &&
+        !assetsDirs.any((d) => p.normalize(d.path) == p.normalize(customDir.path))) {
+      assetsDirs.add(customDir);
     }
+  }
 
-    final pubspecFile = File(p.join(projectPath, 'pubspec.yaml'));
-    if (!pubspecFile.existsSync()) {
-      return CallToolResult(
-        [
-          TextContent(
-              text:
-                  'Error: No "pubspec.yaml" found at "$projectPath". This does not appear to be a Flutter project.')
-        ],
-        isError: true,
-      );
-    }
+  // 2. Scan for physical asset files
+  final assetFiles = <File>[];
+  final excludedExtensions = {
+    '.dart',
+    '.arb',
+    '.yaml',
+    '.lock',
+    '.gitkeep',
+    '.ds_store',
+  };
 
-    // 1. Gather all assets directories
-    final assetsDirs = <Directory>[];
-
-    // Check main assets directory first
-    final mainAssetsDir = Directory(p.join(projectPath, 'assets'));
-    if (mainAssetsDir.existsSync()) {
-      assetsDirs.add(mainAssetsDir);
-    }
-
-    // Also scan pubspec.yaml to find other declared directories
+  for (final dir in assetsDirs) {
     try {
-      final pubspecContent = await pubspecFile.readAsString();
-      // Simple regex/parsing of assets block
-      final lines = pubspecContent.split('\n');
-      bool inAssets = false;
-      for (final line in lines) {
-        final trimmed = line.trim();
-        if (trimmed == 'assets:') {
-          inAssets = true;
-          continue;
-        }
-        if (inAssets) {
-          // If indentation drops back, we left assets block
-          if (line.isNotEmpty &&
-              !line.startsWith(' ') &&
-              !line.startsWith('-')) {
-            inAssets = false;
-            continue;
-          }
-          if (trimmed.startsWith('-')) {
-            final pathEntry = trimmed.substring(1).trim();
-            if (pathEntry.endsWith('/')) {
-              final customDir = Directory(p.join(projectPath, pathEntry));
-              if (customDir.existsSync() &&
-                  !assetsDirs.any((d) =>
-                      p.normalize(d.path) == p.normalize(customDir.path))) {
-                assetsDirs.add(customDir);
-              }
-            }
+      final entities = dir.listSync(recursive: true);
+      for (final entity in entities) {
+        if (entity is File) {
+          final ext = p.extension(entity.path).toLowerCase();
+          final basename = p.basename(entity.path).toLowerCase();
+          if (!excludedExtensions.contains(ext) &&
+              basename != '.ds_store' &&
+              basename != 'thumbs.db') {
+            assetFiles.add(entity);
           }
         }
       }
-    } catch (e) {
-      // Ignore parsing errors
+    } catch (_) {}
+  }
+
+  // Also include singly-declared files
+  for (final singleAsset in project.declaredAssetFiles) {
+    final file = File(project.abs(singleAsset));
+    if (file.existsSync()) {
+      assetFiles.add(file);
     }
+  }
 
-    if (assetsDirs.isEmpty) {
-      return CallToolResult([
-        TextContent(
-            text:
-                'Warning: No physical "assets" folder or declared asset directories found in the project.\n'
-                'No constants were generated.')
-      ]);
+  // Deduplicate files by normalized path
+  final uniqueFiles = <File>[];
+  final seenFilePaths = <String>{};
+  for (final file in assetFiles) {
+    final normalized = p.normalize(file.path);
+    if (seenFilePaths.add(normalized)) {
+      uniqueFiles.add(file);
     }
+  }
 
-    // 2. Scan for physical asset files
-    final assetFiles = <File>[];
-    final excludedExtensions = {
-      '.dart',
-      '.arb',
-      '.yaml',
-      '.lock',
-      '.gitkeep',
-      '.ds_store'
-    };
+  uniqueFiles.sort((a, b) => a.path.compareTo(b.path));
 
-    for (final dir in assetsDirs) {
-      try {
-        final entities = dir.listSync(recursive: true);
-        for (final entity in entities) {
-          if (entity is File) {
-            final ext = p.extension(entity.path).toLowerCase();
-            final basename = p.basename(entity.path).toLowerCase();
-            if (!excludedExtensions.contains(ext) &&
-                basename != '.ds_store' &&
-                basename != 'thumbs.db') {
-              assetFiles.add(entity);
-            }
-          }
-        }
-      } catch (e) {
-        // Continue
+  // 3. Generate camelCase identifiers & resolve collisions
+  final constants = <String, String>{};
+  final reservedWords = {
+    'abstract', 'as', 'assert', 'async', 'await', 'break', 'case', 'catch',
+    'class', 'const', 'continue', 'covariant', 'default', 'deferred', 'do',
+    'dynamic', 'else', 'enum', 'export', 'extends', 'extension', 'external',
+    'factory', 'false', 'final', 'finally', 'for', 'Function', 'get', 'hide',
+    'if', 'implements', 'import', 'in', 'interface', 'is', 'late', 'library',
+    'mixin', 'new', 'null', 'on', 'operator', 'part', 'required', 'rethrow',
+    'return', 'set', 'show', 'static', 'super', 'switch', 'sync', 'this',
+    'throw', 'true', 'try', 'typedef', 'var', 'void', 'when', 'while', 'with',
+    'yield'
+  };
+
+  String toCamelCase(String text) {
+    final sanitized = text.replaceAll(RegExp(r'[^a-zA-Z0-9]'), ' ').trim();
+    if (sanitized.isEmpty) return 'asset';
+
+    final words = sanitized.split(RegExp(r'\s+'));
+    final buffer = StringBuffer(words[0].toLowerCase());
+    for (var i = 1; i < words.length; i++) {
+      final word = words[i];
+      if (word.isNotEmpty) {
+        buffer.write(word[0].toUpperCase() + word.substring(1).toLowerCase());
       }
     }
 
-    // Deduplicate files by absolute path
-    final uniqueFiles = <File>[];
-    final seenFilePaths = <String>{};
-    for (final file in assetFiles) {
-      final normalized = p.normalize(file.path);
-      if (!seenFilePaths.contains(normalized)) {
-        seenFilePaths.add(normalized);
-        uniqueFiles.add(file);
-      }
+    var result = buffer.toString();
+    if (RegExp(r'^[0-9]').hasMatch(result)) {
+      result = 'val$result';
     }
-
-    if (uniqueFiles.isEmpty) {
-      return CallToolResult([
-        TextContent(
-            text:
-                'Warning: No asset files were found in the scanned directories. No constants generated.')
-      ]);
+    if (reservedWords.contains(result)) {
+      result = 'asset${result[0].toUpperCase()}${result.substring(1)}';
     }
+    return result;
+  }
 
-    // Sort files by path for deterministic output
-    uniqueFiles.sort((a, b) => a.path.compareTo(b.path));
+  for (final file in uniqueFiles) {
+    final relativePath = project.rel(file.path);
+    final nameWithoutExt = p.basenameWithoutExtension(file.path);
 
-    // 3. Generate camelCase identifiers & resolve collisions
-    final constants = <String, String>{}; // identifier -> relativePath
-    final reservedWords = {
-      'abstract',
-      'as',
-      'assert',
-      'async',
-      'await',
-      'break',
-      'case',
-      'catch',
-      'class',
-      'const',
-      'continue',
-      'covariant',
-      'default',
-      'deferred',
-      'do',
-      'dynamic',
-      'else',
-      'enum',
-      'export',
-      'extends',
-      'extension',
-      'external',
-      'factory',
-      'false',
-      'final',
-      'finally',
-      'for',
-      'Function',
-      'get',
-      'hide',
-      'if',
-      'implements',
-      'import',
-      'in',
-      'interface',
-      'is',
-      'late',
-      'library',
-      'mixin',
-      'new',
-      'null',
-      'on',
-      'operator',
-      'part',
-      'required',
-      'rethrow',
-      'return',
-      'set',
-      'show',
-      'static',
-      'super',
-      'switch',
-      'sync',
-      'this',
-      'throw',
-      'true',
-      'try',
-      'typedef',
-      'var',
-      'void',
-      'when',
-      'while',
-      'with',
-      'yield'
-    };
+    var identifier = toCamelCase(nameWithoutExt);
 
-    String toCamelCase(String text) {
-      final sanitized = text.replaceAll(RegExp(r'[^a-zA-Z0-9]'), ' ').trim();
-      if (sanitized.isEmpty) return 'asset';
+    if (constants.containsKey(identifier)) {
+      final parentDir = p.basename(p.dirname(file.path));
+      identifier = toCamelCase('${parentDir}_$nameWithoutExt');
 
-      final words = sanitized.split(RegExp(r'\s+'));
-      final buffer = StringBuffer(words[0].toLowerCase());
-      for (var i = 1; i < words.length; i++) {
-        final word = words[i];
-        if (word.isNotEmpty) {
-          buffer.write(word[0].toUpperCase() + word.substring(1).toLowerCase());
-        }
-      }
-
-      var result = buffer.toString();
-      if (RegExp(r'^[0-9]').hasMatch(result)) {
-        result = 'val$result';
-      }
-      if (reservedWords.contains(result)) {
-        result = 'asset${result[0].toUpperCase()}${result.substring(1)}';
-      }
-      return result;
-    }
-
-    for (final file in uniqueFiles) {
-      final relativePath =
-          p.relative(file.path, from: projectPath).replaceAll('\\', '/');
-      final nameWithoutExt = p.basenameWithoutExtension(file.path);
-
-      var identifier = toCamelCase(nameWithoutExt);
-
-      // Resolve collisions
       if (constants.containsKey(identifier)) {
-        // Try prepending the parent directory name
-        final parentDir = p.basename(p.dirname(file.path));
-        identifier = toCamelCase('${parentDir}_$nameWithoutExt');
-
-        // If still colliding, append a counter
-        if (constants.containsKey(identifier)) {
-          var counter = 2;
-          while (constants.containsKey('${identifier}$counter')) {
-            counter++;
-          }
-          identifier = '${identifier}$counter';
+        var counter = 2;
+        while (constants.containsKey('$identifier$counter')) {
+          counter++;
         }
+        identifier = '$identifier$counter';
       }
-
-      constants[identifier] = relativePath;
     }
 
-    // 4. Construct Dart class
-    final buffer = StringBuffer();
-    buffer.writeln('// GENERATED CODE - DO NOT MODIFY BY HAND');
-    buffer.writeln();
-    buffer.writeln('class Assets {');
-    buffer.writeln('  Assets._();');
-    buffer.writeln();
+    constants[identifier] = relativePath;
+  }
 
-    // Sort constants alphabetically by identifier
-    final sortedIdentifiers = constants.keys.toList()..sort();
-    for (final id in sortedIdentifiers) {
-      final path = constants[id];
-      buffer.writeln("  static const String $id = '$path';");
+  // 4. Construct Dart class
+  final buffer = StringBuffer()
+    ..writeln('// GENERATED CODE - DO NOT MODIFY BY HAND')
+    ..writeln('// Generated by AssetGenie')
+    ..writeln()
+    ..writeln('class $className {')
+    ..writeln('  $className._();')
+    ..writeln();
+
+  final sortedIdentifiers = constants.keys.toList()..sort();
+  for (final id in sortedIdentifiers) {
+    final path = constants[id];
+    buffer.writeln("  static const String $id = '$path';");
+  }
+
+  // Also include fonts if declared in pubspec.yaml
+  if (project.fonts.isNotEmpty) {
+    buffer
+      ..writeln()
+      ..writeln('  // Font Families');
+    for (final font in project.fonts) {
+      final fontId = toCamelCase('${font.family}_font');
+      buffer.writeln("  static const String $fontId = '${font.family}';");
     }
+  }
 
-    buffer.writeln('}');
+  buffer.writeln('}');
 
-    // 5. Write to target file inside lib/generated/
-    final outputDir = Directory(p.join(projectPath, 'lib', 'generated'));
+  final outputDir = Directory(p.join(project.root, 'lib', 'generated'));
+  final outputFile = File(p.join(outputDir.path, outputFilename));
+  final relOutputPath = project.rel(outputFile.path);
+
+  if (!dryRun) {
     if (!outputDir.existsSync()) {
       outputDir.createSync(recursive: true);
     }
-
-    final outputFile = File(p.join(outputDir.path, outputFilename));
     await outputFile.writeAsString(buffer.toString());
-
-    final relativeOutputPath =
-        p.relative(outputFile.path, from: projectPath).replaceAll('\\', '/');
-
-    return CallToolResult([
-      TextContent(
-          text:
-              'Success: Generated asset constants class `Assets` inside `$relativeOutputPath`.\n'
-              'Added ${constants.length} string constants representing physical assets.')
-    ]);
-  } catch (e) {
-    return CallToolResult(
-      [TextContent(text: 'Error generating constants: ${e.toString()}')],
-      isError: true,
-    );
   }
+
+  final report = StringBuffer()
+    ..writeln('# AssetGenie Constants Generator Report')
+    ..writeln('Project: `${project.name}`')
+    ..writeln('Target Output: `$relOutputPath`')
+    ..writeln('Class Name: `$className`')
+    ..writeln('Mode: ${dryRun ? '`dry_run` (preview only)' : 'Generated and written'}')
+    ..writeln()
+    ..writeln('## Summary')
+    ..writeln('- Asset constants generated: ${constants.length}')
+    ..writeln('- Font family constants: ${project.fonts.length}')
+    ..writeln();
+
+  if (constants.isNotEmpty) {
+    report.writeln('### Sample Generated Constants');
+    final previewKeys = sortedIdentifiers.take(10);
+    for (final k in previewKeys) {
+      report.writeln('- `$className.$k` -> `${constants[k]}`');
+    }
+    if (sortedIdentifiers.length > 10) {
+      report.writeln('- ... and ${sortedIdentifiers.length - 10} more.');
+    }
+  }
+
+  final structured = <String, Object?>{
+    'output_file': relOutputPath,
+    'asset_count': constants.length,
+    'font_family_count': project.fonts.length,
+    'dry_run': dryRun,
+    'constants': constants,
+  };
+
+  return toolOk(report.toString(), structured);
 }

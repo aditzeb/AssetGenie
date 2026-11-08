@@ -1,7 +1,40 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:mcp_server/mcp_server.dart';
+
+import 'package:dart_mcp/server.dart';
+
+import '../common/context.dart';
+
+final ToolSpec appHarnessSpec = ToolSpec(
+  Tool(
+    name: 'assetgenie_app_harness',
+    title: 'Flutter application live runtime inspector and harness',
+    description:
+        'Connects to a running Flutter application via its Dart VM Service to inspect '
+        'the active widget summary tree, capture live UI screenshots, or intercept runtime console logs.',
+    annotations: ToolAnnotations(
+      readOnlyHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    ),
+    inputSchema: ObjectSchema(
+      properties: {
+        'vm_service_uri': StringSchema(
+          description:
+              'The Dart VM Service WebSocket or HTTP URI (e.g. http://127.0.0.1:8181/T9n3k_04gA=/).',
+        ),
+        'action': UntitledSingleSelectEnumSchema(
+          description:
+              'The instrumentation action to perform on the running Flutter application.',
+          values: ['get_widget_tree', 'capture_screenshot', 'get_logs'],
+        ),
+      },
+      required: ['vm_service_uri', 'action'],
+    ),
+  ),
+  appHarnessHandler,
+);
 
 class VmServiceClient {
   final String wsUri;
@@ -74,24 +107,18 @@ String resolveWsUri(String uriStr) {
   return resolved;
 }
 
-Future<CallToolResult> appHarness(Map<String, dynamic> arguments) async {
+Future<CallToolResult> appHarnessHandler(
+  Map<String, Object?> arguments,
+  ToolContext context,
+) async {
   final vmServiceUri = arguments['vm_service_uri'] as String?;
   if (vmServiceUri == null || vmServiceUri.isEmpty) {
-    return CallToolResult(
-      [
-        TextContent(
-            text: 'Error: "vm_service_uri" is required and cannot be empty.')
-      ],
-      isError: true,
-    );
+    return toolError('"vm_service_uri" is required and cannot be empty.');
   }
 
   final action = arguments['action'] as String?;
   if (action == null || action.isEmpty) {
-    return CallToolResult(
-      [TextContent(text: 'Error: "action" is required and cannot be empty.')],
-      isError: true,
-    );
+    return toolError('"action" is required and cannot be empty.');
   }
 
   final wsUri = resolveWsUri(vmServiceUri);
@@ -125,14 +152,15 @@ Future<CallToolResult> appHarness(Map<String, dynamic> arguments) async {
       }
 
       final encoder = const JsonEncoder.withIndent('  ');
-      return CallToolResult([
-        TextContent(
-          text:
-              '# Flutter Widget Summary Tree\n\n```json\n${encoder.convert(treeData)}\n```',
-        )
-      ]);
+      return CallToolResult(
+        content: [
+          TextContent(
+            text: '# Flutter Widget Summary Tree\n\n```json\n${encoder.convert(treeData)}\n```',
+          ),
+        ],
+        structuredContent: treeData,
+      );
     } else if (action == 'capture_screenshot') {
-      // 1. Get tree to find root value ID
       final treeResponse = await client.callMethod(
         'ext.flutter.inspector.getRootWidgetSummaryTree',
         {'objectGroup': 'assetgenie_harness'},
@@ -159,7 +187,6 @@ Future<CallToolResult> appHarness(Map<String, dynamic> arguments) async {
         }
       }
 
-      // 2. Call screenshot on root widget
       final response = await client.callMethod(
         'ext.flutter.inspector.screenshot',
         {
@@ -169,8 +196,8 @@ Future<CallToolResult> appHarness(Map<String, dynamic> arguments) async {
       );
 
       if (response.containsKey('error')) {
-        throw Exception(response['error']['message'] ??
-            'Failed to capture app screenshot.');
+        throw Exception(
+            response['error']['message'] ?? 'Failed to capture app screenshot.');
       }
 
       final result = response['result'];
@@ -187,15 +214,16 @@ Future<CallToolResult> appHarness(Map<String, dynamic> arguments) async {
         throw Exception('Screenshot result did not contain valid image data.');
       }
 
-      // Clean up base64 whitespace if any
       base64Data = base64Data.trim().replaceAll('\n', '').replaceAll('\r', '');
 
-      return CallToolResult([
-        ImageContent.fromBase64(
-          base64Data: base64Data,
-          mimeType: 'image/png',
-        )
-      ]);
+      return CallToolResult(
+        content: [
+          ImageContent(
+            data: base64Data,
+            mimeType: 'image/png',
+          ),
+        ],
+      );
     } else if (action == 'get_logs') {
       final logBuffer = StringBuffer();
 
@@ -233,7 +261,6 @@ Future<CallToolResult> appHarness(Map<String, dynamic> arguments) async {
         } catch (_) {}
       };
 
-      // Subscribe to logging streams
       try {
         await client.callMethod('streamListen', {'streamId': 'Stdout'});
       } catch (_) {}
@@ -244,33 +271,26 @@ Future<CallToolResult> appHarness(Map<String, dynamic> arguments) async {
         await client.callMethod('streamListen', {'streamId': 'Logging'});
       } catch (_) {}
 
-      // Capture logs for 1.5 seconds
       await Future.delayed(const Duration(milliseconds: 1500));
       client.onMessage = null;
 
       final logsText = logBuffer.toString();
-      return CallToolResult([
-        TextContent(
-          text: logsText.isEmpty
-              ? 'No new runtime logs were intercepted during the capture window.'
-              : '# Captured Flutter App Logs\n\n```\n$logsText\n```',
-        )
-      ]);
-    } else {
       return CallToolResult(
-        [
+        content: [
           TextContent(
-              text:
-                  'Error: Unknown action "$action". Supported actions are: "get_widget_tree", "capture_screenshot", "get_logs".')
+            text: logsText.isEmpty
+                ? 'No new runtime logs were intercepted during the capture window.'
+                : '# Captured Flutter App Logs\n\n```\n$logsText\n```',
+          ),
         ],
-        isError: true,
+      );
+    } else {
+      return toolError(
+        'Unknown action "$action". Supported actions are: "get_widget_tree", "capture_screenshot", "get_logs".',
       );
     }
   } catch (e) {
-    return CallToolResult(
-      [TextContent(text: 'Error interacting with app: ${e.toString()}')],
-      isError: true,
-    );
+    return toolError('Interacting with app: $e');
   } finally {
     await client.close();
   }
